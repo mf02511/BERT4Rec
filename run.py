@@ -25,7 +25,9 @@ import tensorflow as tf
 import numpy as np
 import sys
 import pickle
-flags = tf.flags
+from absl import flags
+import logging
+logging.basicConfig(level=logging.DEBUG)
 
 FLAGS = flags.FLAGS
 
@@ -90,25 +92,25 @@ flags.DEFINE_integer("max_eval_steps", 1000, "Maximum number of eval steps.")
 
 flags.DEFINE_bool("use_tpu", False, "Whether to use TPU or GPU/CPU.")
 
-tf.flags.DEFINE_string(
+flags.DEFINE_string(
     "tpu_name", None,
     "The Cloud TPU to use for training. This should be either the name "
     "used when creating the Cloud TPU, or a grpc://ip.address.of.tpu:8470 "
     "url.")
 
-tf.flags.DEFINE_string(
+flags.DEFINE_string(
     "tpu_zone", None,
     "[Optional] GCE zone where the Cloud TPU is located in. If not "
     "specified, we will attempt to automatically detect the GCE project from "
     "metadata.")
 
-tf.flags.DEFINE_string(
+flags.DEFINE_string(
     "gcp_project", None,
     "[Optional] Project name for the Cloud TPU-enabled project. If not "
     "specified, we will attempt to automatically detect the GCE project from "
     "metadata.")
 
-tf.flags.DEFINE_string("master", None, "[Optional] TensorFlow master URL.")
+flags.DEFINE_string("master", None, "[Optional] TensorFlow master URL.")
 
 flags.DEFINE_integer(
     "num_tpu_cores", 8,
@@ -120,9 +122,9 @@ flags.DEFINE_string("user_history_filename", None, "user history filename")
 
 
 
-class EvalHooks(tf.train.SessionRunHook):
+class EvalHooks(tf.compat.v1.train.SessionRunHook):
     def __init__(self):
-        tf.logging.info('run init')
+        logging.info('run init')
 
     def begin(self):
         self.valid_user = 0.0
@@ -168,13 +170,13 @@ class EvalHooks(tf.train.SessionRunHook):
                    self.valid_user))
 
     def before_run(self, run_context):
-        #tf.logging.info('run before run')
+        #logging.info('run before run')
         #print('run before_run')
         variables = tf.get_collection('eval_sp')
         return tf.train.SessionRunArgs(variables)
 
     def after_run(self, run_context, run_values):
-        #tf.logging.info('run after run')
+        #logging.info('run after run')
         #print('run after run')
         masked_lm_log_probs, input_ids, masked_lm_ids, info = run_values.results
         masked_lm_log_probs = masked_lm_log_probs.reshape(
@@ -237,9 +239,9 @@ def model_fn_builder(bert_config, init_checkpoint, learning_rate,
     def model_fn(features, labels, mode, params):  # pylint: disable=unused-argument
         """The `model_fn` for TPUEstimator."""
 
-        tf.logging.info("*** Features ***")
+        logging.info("*** Features ***")
         for name in sorted(features.keys()):
-            tf.logging.info("  name = %s, shape = %s" % (name,
+            logging.info("  name = %s, shape = %s" % (name,
                                                          features[name].shape))
 
         info = features["info"]
@@ -291,12 +293,12 @@ def model_fn_builder(bert_config, init_checkpoint, learning_rate,
             else:
                 tf.train.init_from_checkpoint(init_checkpoint, assignment_map)
 
-        tf.logging.info("**** Trainable Variables ****")
+        logging.info("**** Trainable Variables ****")
         for var in tvars:
             init_string = ""
             if var.name in initialized_variable_names:
                 init_string = ", *INIT_FROM_CKPT*"
-            tf.logging.info("  name = %s, shape = %s%s", var.name, var.shape,
+            logging.info("  name = %s, shape = %s%s", var.name, var.shape,
                             init_string)
 
         output_spec = None
@@ -434,17 +436,17 @@ def input_fn_builder(input_files,
 
         name_to_features = {
             "info":
-            tf.FixedLenFeature([1], tf.int64),  #[user]
+            tf.io.FixedLenFeature([1], tf.int64),  #[user]
             "input_ids":
-            tf.FixedLenFeature([max_seq_length], tf.int64),
+            tf.io.FixedLenFeature([max_seq_length], tf.int64),
             "input_mask":
-            tf.FixedLenFeature([max_seq_length], tf.int64),
+            tf.io.FixedLenFeature([max_seq_length], tf.int64),
             "masked_lm_positions":
-            tf.FixedLenFeature([max_predictions_per_seq], tf.int64),
+            tf.io.FixedLenFeature([max_predictions_per_seq], tf.int64),
             "masked_lm_ids":
-            tf.FixedLenFeature([max_predictions_per_seq], tf.int64),
+            tf.io.FixedLenFeature([max_predictions_per_seq], tf.int64),
             "masked_lm_weights":
-            tf.FixedLenFeature([max_predictions_per_seq], tf.float32)
+            tf.io.FixedLenFeature([max_predictions_per_seq], tf.float32)
         }
 
         # For training, we want a lot of parallel reading and shuffling.
@@ -480,7 +482,7 @@ def input_fn_builder(input_files,
 
 def _decode_record(record, name_to_features):
     """Decodes a record to a TensorFlow example."""
-    example = tf.parse_single_example(record, name_to_features)
+    example = tf.io.parse_single_example(record, name_to_features)
 
     # tf.Example only supports tf.int64, but the TPU only supports tf.int32.
     # So cast all int64 to int32.
@@ -493,8 +495,11 @@ def _decode_record(record, name_to_features):
     return example
 
 
-def main(_):
-    tf.logging.set_verbosity(tf.logging.INFO)
+def main(argv):
+    logging.basicConfig(level=logging.DEBUG)
+    
+    FLAGS(argv)
+    FLAGS.checkpointDir = '/home/mfukuda/private/DSC210/BERT4Rec/checkpoints'
 
     FLAGS.checkpointDir = FLAGS.checkpointDir + FLAGS.signature
     print('checkpointDir:', FLAGS.checkpointDir)
@@ -505,26 +510,26 @@ def main(_):
 
     bert_config = modeling.BertConfig.from_json_file(FLAGS.bert_config_file)
 
-    tf.gfile.MakeDirs(FLAGS.checkpointDir)
+    tf.io.gfile.makedirs(FLAGS.checkpointDir)
 
     train_input_files = []
     for input_pattern in FLAGS.train_input_file.split(","):
-        train_input_files.extend(tf.gfile.Glob(input_pattern))
+        train_input_files.extend(tf.io.gfile.glob(input_pattern))
 
     test_input_files = []
     if FLAGS.test_input_file is None:
         test_input_files = train_input_files
     else:
         for input_pattern in FLAGS.test_input_file.split(","):
-            test_input_files.extend(tf.gfile.Glob(input_pattern))
+            test_input_files.extend(tf.io.gfile.glob(input_pattern))
 
-    tf.logging.info("*** train Input Files ***")
+    logging.info("*** train Input Files ***")
     for input_file in train_input_files:
-        tf.logging.info("  %s" % input_file)
+        logging.info("  %s" % input_file)
 
-    tf.logging.info("*** test Input Files ***")
+    logging.info("*** test Input Files ***")
     for input_file in train_input_files:
-        tf.logging.info("  %s" % input_file)
+        logging.info("  %s" % input_file)
 
     tpu_cluster_resolver = None
 
@@ -558,8 +563,8 @@ def main(_):
         })
 
     if FLAGS.do_train:
-        tf.logging.info("***** Running training *****")
-        tf.logging.info("  Batch size = %d", FLAGS.batch_size)
+        logging.info("***** Running training *****")
+        logging.info("  Batch size = %d", FLAGS.batch_size)
         train_input_fn = input_fn_builder(
             input_files=train_input_files,
             max_seq_length=FLAGS.max_seq_length,
@@ -569,8 +574,8 @@ def main(_):
             input_fn=train_input_fn, max_steps=FLAGS.num_train_steps)
 
     if FLAGS.do_eval:
-        tf.logging.info("***** Running evaluation *****")
-        tf.logging.info("  Batch size = %d", FLAGS.batch_size)
+        logging.info("***** Running evaluation *****")
+        logging.info("  Batch size = %d", FLAGS.batch_size)
 
         eval_input_fn = input_fn_builder(
             input_files=test_input_files,
@@ -586,17 +591,18 @@ def main(_):
 
         output_eval_file = os.path.join(FLAGS.checkpointDir,
                                         "eval_results.txt")
-        with tf.gfile.GFile(output_eval_file, "w") as writer:
-            tf.logging.info("***** Eval results *****")
-            tf.logging.info(bert_config.to_json_string())
+        with tf.io.gfile.GFile(output_eval_file, "w") as writer:
+            logging.info("***** Eval results *****")
+            logging.info(bert_config.to_json_string())
             writer.write(bert_config.to_json_string()+'\n')
             for key in sorted(result.keys()):
-                tf.logging.info("  %s = %s", key, str(result[key]))
+                logging.info("  %s = %s", key, str(result[key]))
                 writer.write("%s = %s\n" % (key, str(result[key])))
 
 
 if __name__ == "__main__":
+    import sys
     flags.mark_flag_as_required("bert_config_file")
     flags.mark_flag_as_required("checkpointDir")
     flags.mark_flag_as_required("user_history_filename")
-    tf.app.run()
+    main(sys.argv)
